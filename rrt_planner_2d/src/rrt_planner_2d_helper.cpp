@@ -2,6 +2,8 @@
 #include <limits>
 #include <cmath>
 #include "ros/ros.h"
+#include "voro++.hh"
+#include <vector>
 //#include <stdlib.h>     /* srand, rand */
 //#include "nav_msgs/OccupancyGrid.h"
 
@@ -104,11 +106,27 @@ bool intersection_square_segment(const float x1,const float y1,const float x2,co
 }
 
 bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connections, int *number_connections, float **tree_points, int *points_added_out, const float max_length,const float min_length,const int max_points,const float max_angle, const nav_msgs::OccupancyGrid::ConstPtr& grid, const geometry_msgs::Point start,const geometry_msgs::Point goal,const float max_error){
+	using namespace voro;
 	bool found = false;  //set false unless path found
 	*number_waypoints = 0;
 	//float tree_points[max_points][2];
-	float tree_branches_per_point[max_points];
-	memset(tree_branches_per_point, 0, max_points*sizeof(float));
+	//TODO maybe dynamic memory array here
+	//float tree_branches_per_point[max_points];
+	//memset(tree_branches_per_point, 0, max_points*sizeof(float));
+	float *tree_branches_per_point = new float[max_points];
+
+	///int ijk_index_per_point[max_points];	//voronoi related
+	//memset(ijk_index_per_point, 0, max_points*sizeof(int));
+	int *ijk_index_per_point = new int[max_points];
+	//int q_index_per_point[max_points];	//voronoi related
+	//memset(q_index_per_point, 0, max_points*sizeof(int));
+	int *q_index_per_point = new int[max_points];
+	//double voronoi_volume_per_point[max_points];	//voronoi related
+	//memset(voronoi_volume_per_point, 0, max_points*sizeof(double));
+	double *voronoi_volume_per_point = new double[max_points];
+
+	std::vector<int> neigh;
+
 	//float tree_connections[max_points][2];
 	float vector[2];
 	float angle_2_goal;
@@ -126,18 +144,64 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
     int max_iterations = max_points*100;  //TODO check-remove
     int iterations = 0;
 
+    //Voronoi related
+    const double x_min=grid->info.origin.position.x;
+    const double x_max=grid->info.origin.position.x+(double)grid->info.width*grid->info.resolution;
+    const double y_min=grid->info.origin.position.y;
+    const double y_max=grid->info.origin.position.y+(double)grid->info.height*grid->info.resolution;
+    const double z_min=-0.5,z_max=0.5;
+    ROS_INFO("RRT: Container: %f - %f - %f - %f", x_min, x_max, y_min, y_max);
+    ROS_INFO("RRT: Grid origin: %f - %f. Grid width - heigth: %d - %d. Resolution: %f", grid->info.origin.position.x, grid->info.origin.position.y, grid->info.width, grid->info.height, grid->info.resolution);
+
+    const int n_x=10,n_y=10,n_z=1;
+    voronoicell_neighbor cell;
+    double volume;
+    container voronoi_container(x_min,x_max,y_min,y_max,z_min,z_max,n_x,n_y,n_z,
+                             false,false,false,12);
+    int ijk,q;
+    //----------------
+
 	//Fill start in the tree
 	points_added++;
 	tree_points[points_added-1][0] = start.x;
 	tree_points[points_added-1][1] = start.y;
+
+	//  ---- Voronoi ----
+	voronoi_container.put(points_added,(double)start.x,(double)start.y,0.0);
+	for (int m=0; m<n_x*n_y*n_z; m++){	//TODO don't like this to find ijk and q
+		for (int n=0; n<voronoi_container.co[m]; n++){
+			if (voronoi_container.id[m][n] == points_added){
+				ijk = m;
+				q = n;
+				//ROS_INFO("RRT: ijk - q: %d - %d", ijk, q);
+				break;
+			}
+		}
+	}
+	if (voronoi_container.compute_cell(cell,ijk,q)){	//------Calcutate cell
+	    volume = cell.volume();		//------Calculate volume
+	    //ROS_INFO("RRT: Volume: %f", volume);
+	    voronoi_volume_per_point[points_added-1] = volume;
+    } else {
+        ROS_INFO("RRT: Not able to compute cell!");
+    }
+	// ----------------------
+
 
 	while(points_added < max_points && !found && iterations < max_iterations){	//main loop of algorithm
 		random_number = (float)rand() / (RAND_MAX + 1.0); //Random between 0 and 0.99999  TODO check this
 		int random_point_in_tree = floor(random_number*points_added) + 1;
         //ROS_INFO("RRT: iteration");
 		while (tree_branches_per_point[random_point_in_tree-1] > 3){   //to avoid points with more than 5 branches
-			random_number = random_number = (float)rand() / (RAND_MAX + 1.0);
+			random_number = (float)rand() / (RAND_MAX + 1.0);
 			random_point_in_tree = floor(random_number*points_added) + 1;
+		}
+        double temp_max_volume = 0.0;
+        for (int i=0; i<points_added-1; i++){
+			if (voronoi_volume_per_point[i]>temp_max_volume){
+                temp_max_volume = voronoi_volume_per_point[i];
+                random_point_in_tree = i+1;
+            }
 		}
 		if (random_point_in_tree == 1){
 		        vector[0] = goal.x-start.x;
@@ -169,19 +233,79 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 			if (angle_2_goal < -max_angle){
 				angle_2_goal = -max_angle;
 			}
-			random_angle = random_number*max_angle*2-max_angle; //TODO generate a new random instead of using the old value
-			random_increment = random_number*(max_length-min_length)+min_length;	//TODO generate a new random instead of using the old value
-			random_angle = random_number/2*angle_2_goal + (1-random_number/2)*random_angle; //BIAS toward goal of angle
+			random_number = (float)rand() / (RAND_MAX);
+			random_angle = random_number*max_angle*2-max_angle;
+			random_number = (float)rand() / (RAND_MAX);
+			random_increment = random_number*(max_length-min_length)+min_length;
+            random_number = (float)rand() / (RAND_MAX);
+            random_angle = random_number/2*angle_2_goal + (1-random_number/2)*random_angle; //BIAS toward goal of angle
 			versor[0] = vector[0]/(norm(vector[0],vector[1]));
 			versor[1] = vector[1]/(norm(vector[0],vector[1]));
 			point_to_test[0] = tree_points[random_point_in_tree-1][0] + random_increment*versor[0]*cos(random_angle) - random_increment*versor[1]*sin(random_angle);
 			point_to_test[1] = tree_points[random_point_in_tree-1][1] + random_increment*versor[0]*sin(random_angle) + random_increment*versor[1]*cos(random_angle);
 			collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], random_increment);
 		}
-		if (!collision){	//add point and connection in tree
+		if (!collision){	//add point and connection in tree. Update Voronoi volumes
 			points_added++;
 			tree_points[points_added-1][0] = point_to_test[0];
 			tree_points[points_added-1][1] = point_to_test[1];
+
+			//  ---- Voronoi ----
+			//ROS_INFO("[RRT]: Inserting %d particle: %f - %f", points_added, (double)point_to_test[0], (double)point_to_test[1]);
+	        voronoi_container.put(points_added,(double)point_to_test[0],(double)point_to_test[1],0.0);
+			bool flag_break = false;
+			for (int m=0; m<n_x*n_y*n_z; m++){	//TODO don't like this to find ijk and q
+				if (flag_break){
+					flag_break = false;
+					break;
+				}
+				for (int n=0; n<voronoi_container.co[m]; n++){
+					if (voronoi_container.id[m][n] == points_added){
+						ijk = m;
+						q = n;
+						//ROS_INFO("RRT: ijk - q: %d - %d", ijk, q);
+						flag_break = true;
+						break;
+					}
+				}
+			}
+			if (voronoi_container.compute_cell(cell,ijk,q)){	//------Calcutate cell
+			    volume = cell.volume();		//------Calculate volume
+			    //ROS_INFO("RRT: Volume: %f", volume);
+			    voronoi_volume_per_point[points_added-1] = volume;
+			    cell.neighbors(neigh);
+			    for(int i=0;i<neigh.size();i++) {
+			    	//reevaluate volumes for neighbors
+			    	if (neigh[i]>=0){	//there is a neighbor
+			    		for (int m=0; m<n_x*n_y*n_z; m++){	//TODO don't like this to find ijk and q
+			    			if (flag_break){
+								flag_break = false;
+								break;
+							}
+							for (int n=0; n<voronoi_container.co[m]; n++){
+								if (voronoi_container.id[m][n] == neigh[i]){
+									ijk = m;
+									q = n;
+									flag_break = true;
+									break;
+								}
+							}
+						}
+			    		if (voronoi_container.compute_cell(cell,ijk,q)){
+			    			volume = cell.volume();		//------Calculate volume
+							//ROS_INFO("RRT: Volume neigh: %f", volume);
+							voronoi_volume_per_point[neigh[i]-1] = volume;
+			    		} else {
+			                ROS_INFO("RRT: Not able to compute cell (neighbor)!");
+			            }
+			    	}
+				    //ROS_INFO("RRT: Neighbour %d: %d", i, neigh[i]);
+			    }
+            } else {
+                ROS_INFO("RRT: Not able to compute cell!");
+            }
+			//-----------------------------------------------
+
 			tree_branches_per_point[random_point_in_tree-1]++;
 			connection_added++;
 			tree_connections[connection_added-1][0] = random_point_in_tree;
@@ -214,6 +338,10 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 	*number_connections = connection_added;
 	*points_added_out = points_added;
     ROS_INFO("RRT: FINISH");
+    delete [] tree_branches_per_point;	//Deleting dynamic array
+    delete [] ijk_index_per_point;
+    delete [] q_index_per_point;
+    delete [] voronoi_volume_per_point;
 	return found;
 }
 

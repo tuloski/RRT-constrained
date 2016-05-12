@@ -64,7 +64,7 @@ public:
 		N_WP = 0;      //OUTPUT
 		number_connections = 0;
 		number_points = 0;
-		max_points = 6000;	//TODO take prom parameter server
+		max_points = 1000;	//TODO take prom parameter server
 
 		WP = new float *[150];        //OUTPUT    //TODO check hardcoded 150
 		for(int i = 0; i<150; i++){

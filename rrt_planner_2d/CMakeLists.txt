@@ -116,6 +116,8 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   include
   include/rrt_planner_2d
+  /usr/local/include/voro++
+  /usr/local/lib
   ~/catkin_ws/src/${PROJECT_NAME}/include/${PROJECT_NAME}
 )
 
@@ -139,6 +141,7 @@ include_directories(
 ## Specify libraries to link a library or executable target against
  target_link_libraries(rrt_planner_2d
    ${catkin_LIBRARIES}
+  voro++
  )
 
 #############
