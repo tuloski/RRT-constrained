@@ -173,6 +173,8 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 			if (voronoi_container.id[m][n] == points_added){
 				ijk = m;
 				q = n;
+                ijk_index_per_point[points_added-1] = ijk;
+                q_index_per_point[points_added-1] = q;
 				//ROS_INFO("RRT: ijk - q: %d - %d", ijk, q);
 				break;
 			}
@@ -186,23 +188,25 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
         ROS_INFO("RRT: Not able to compute cell!");
     }
 	// ----------------------
-
+    double max_volume = 0.0;        //max Voronoi volume
 
 	while(points_added < max_points && !found && iterations < max_iterations){	//main loop of algorithm
+        for (int i=0; i<points_added-1; i++){
+			if (voronoi_volume_per_point[i]>max_volume){
+                max_volume = voronoi_volume_per_point[i];
+            }
+		}
+        //ROS_INFO("[RRT]: Max volume: %f",max_volume);
 		random_number = (float)rand() / (RAND_MAX + 1.0); //Random between 0 and 0.99999  TODO check this
 		int random_point_in_tree = floor(random_number*points_added) + 1;
         //ROS_INFO("RRT: iteration");
-		while (tree_branches_per_point[random_point_in_tree-1] > 3){   //to avoid points with more than 5 branches
+		while (tree_branches_per_point[random_point_in_tree-1] > 7 ){// || voronoi_volume_per_point[random_point_in_tree-1] < max_volume/30){   //to avoid points with more than 5 branches
 			random_number = (float)rand() / (RAND_MAX + 1.0);
+            //ROS_INFO("[RRT]: Random: %f",random_number);
 			random_point_in_tree = floor(random_number*points_added) + 1;
-		}
-        double temp_max_volume = 0.0;
-        for (int i=0; i<points_added-1; i++){
-			if (voronoi_volume_per_point[i]>temp_max_volume){
-                temp_max_volume = voronoi_volume_per_point[i];
-                random_point_in_tree = i+1;
-            }
-		}
+            //iterations++;
+            if (iterations > max_iterations) break;
+		}   //TODO add another way to not get stuck into the loop
 		if (random_point_in_tree == 1){
 		        vector[0] = goal.x-start.x;
 				vector[1] = goal.y-start.y;
@@ -263,6 +267,8 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 					if (voronoi_container.id[m][n] == points_added){
 						ijk = m;
 						q = n;
+                        ijk_index_per_point[points_added-1] = ijk;
+                        q_index_per_point[points_added-1] = q;
 						//ROS_INFO("RRT: ijk - q: %d - %d", ijk, q);
 						flag_break = true;
 						break;
@@ -277,21 +283,7 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 			    for(int i=0;i<neigh.size();i++) {
 			    	//reevaluate volumes for neighbors
 			    	if (neigh[i]>=0){	//there is a neighbor
-			    		for (int m=0; m<n_x*n_y*n_z; m++){	//TODO don't like this to find ijk and q
-			    			if (flag_break){
-								flag_break = false;
-								break;
-							}
-							for (int n=0; n<voronoi_container.co[m]; n++){
-								if (voronoi_container.id[m][n] == neigh[i]){
-									ijk = m;
-									q = n;
-									flag_break = true;
-									break;
-								}
-							}
-						}
-			    		if (voronoi_container.compute_cell(cell,ijk,q)){
+			    		if (voronoi_container.compute_cell(cell,ijk_index_per_point[neigh[i]-1],q_index_per_point[neigh[i]-1])){
 			    			volume = cell.volume();		//------Calculate volume
 							//ROS_INFO("RRT: Volume neigh: %f", volume);
 							voronoi_volume_per_point[neigh[i]-1] = volume;
@@ -362,7 +354,7 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
 	float origin_x = grid->info.origin.position.x;
 	float origin_y = grid->info.origin.position.y;
 	//ROS_INFO("Map data: %d - %d - %f - %f - %f", width, height, resolution, origin_x, origin_y);
-	int threshold = 10;	//TODO define better based on data
+	int threshold = 5;	//TODO define better based on data
 	int width_tile_index_from = floor((from_x-origin_x)/resolution); // index of the tile of initial point along x
 	int height_tile_index_from = floor((from_y-origin_y)/resolution); // index of the tile of initial point along y
 	int numbers_of_tiles_to_check_around = ceil(distance/resolution);

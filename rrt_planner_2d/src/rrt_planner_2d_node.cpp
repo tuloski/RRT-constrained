@@ -57,8 +57,8 @@ public:
 		start.y = -5;
 		start.z = 0;
 
-		goal.x = 11;
-		goal.y = -4;
+		goal.x = 6;
+		goal.y = 0;
 		goal.z = 0;
 
 		N_WP = 0;      //OUTPUT
