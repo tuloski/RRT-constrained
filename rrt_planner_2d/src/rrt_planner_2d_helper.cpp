@@ -228,7 +228,8 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 		if (angle_2_goal < max_angle && angle_2_goal > -max_angle && distance_to_goal > min_length && distance_to_goal < max_length){
 		        point_to_test[0] = goal.x;
 		        point_to_test[1] = goal.y;
-		        collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], distance_to_goal);
+                //TODO put real thickness coming from parameters
+		        collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0);
 		}
 		if (collision){
 			if (angle_2_goal > max_angle){
@@ -247,7 +248,8 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 			versor[1] = vector[1]/(norm(vector[0],vector[1]));
 			point_to_test[0] = tree_points[random_point_in_tree-1][0] + random_increment*versor[0]*cos(random_angle) - random_increment*versor[1]*sin(random_angle);
 			point_to_test[1] = tree_points[random_point_in_tree-1][1] + random_increment*versor[0]*sin(random_angle) + random_increment*versor[1]*cos(random_angle);
-			collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], random_increment);
+            //TODO put real thickness coming from parameters
+			collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0);
 		}
 		if (!collision){	//add point and connection in tree. Update Voronoi volumes
 			points_added++;
@@ -345,9 +347,13 @@ float norm(float a, float b){
 	return sqrt(pow(a,2)+pow(b,2));
 }
 
-bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float from_x, const float from_y, const float to_x, const float to_y, const float distance){
+bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float from_x, const float from_y, const float to_x, const float to_y, const float thickness){
 	//distance is the norm of the distance between "from" and "to" points
 	//TODO better cells selection to check. Now looking for all the cells in the square around the radius "distance"
+    float _from_x = from_x;
+    float _from_y = from_y;
+    float _to_x = to_x;
+    float _to_y = to_y;
 	int width = grid->info.width;
 	int height = grid->info.height;
 	float resolution = grid->info.resolution;
@@ -355,7 +361,10 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
 	float origin_y = grid->info.origin.position.y;
 	//ROS_INFO("Map data: %d - %d - %f - %f - %f", width, height, resolution, origin_x, origin_y);
 	int threshold = 5;	//TODO define better based on data
-	int width_tile_index_from = floor((from_x-origin_x)/resolution); // index of the tile of initial point along x
+    bool safe = false; //if true adds more tiles around the line for safety //TODO better tiles checking
+
+    //---OLD CHECK----
+	/*int width_tile_index_from = floor((from_x-origin_x)/resolution); // index of the tile of initial point along x
 	int height_tile_index_from = floor((from_y-origin_y)/resolution); // index of the tile of initial point along y
 	int numbers_of_tiles_to_check_around = ceil(distance/resolution);
 	//ROS_INFO("Collision data: %d - %d - %d", width_tile_index_from, height_tile_index_from, numbers_of_tiles_to_check_around);
@@ -368,7 +377,67 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
 			}
 		}
 	}
-	return false;
+	return false;*/
+    
+    //---NEW CHECK---
+    int index_x, index_y;
+    if (_to_x <= _from_x){
+        //invert from/to points if to_x is less than from_x to simplify things later
+        float temp_x, temp_y;
+        temp_x = _from_x;
+        temp_y = _from_y;
+        _from_x = _to_x;
+        _from_y = _to_y;
+        _to_x = temp_x;
+        _to_y = temp_y;    
+    }
+    //ROS_INFO("From TO: %f - %f - %f - %f", _from_x, _from_y, _to_x, _to_y);
+
+    if (thickness == 0){
+        //ROS_INFO("Thickness is zero");
+        //TODO better collision check for single line
+        //checking intersections with vertical and horizontal lines
+        float m_single, q_single;
+        float max_points_x = std::max(_from_x,_to_x);
+        float min_points_x = std::min(_from_x,_to_x);
+        float to_x_minus_from_x = _to_x - _from_x;
+        float to_y_minus_from_y = _to_y - _from_y;
+        if (to_x_minus_from_x != 0){
+            m_single = to_y_minus_from_y/to_x_minus_from_x;
+            q_single = _from_y - m_single*_from_x;
+        } else {
+            m_single = 0;
+            q_single = 0;
+        }
+        //ROS_INFO("M, q: %f, %f",m_single, q_single);
+        if (m_single == 0){
+            float min_points_y = std::min(_from_y,_to_y);
+            float max_points_y = std::max(_from_y,_to_y);
+            int y_min_index = floor((min_points_y - origin_y)/resolution);
+            int y_max_index = floor((max_points_y - origin_y)/resolution);
+            index_x = floor((_from_x - origin_x)/resolution);
+            for (index_y = y_min_index; index_y <= y_max_index; index_y++){
+                if (grid->data[index_y*width+index_x] > threshold){
+                    return true;    //intersection
+                }
+            }
+            return false;   //no intersection
+        } else {
+            float y;
+            for (float x = min_points_x; x < max_points_x; x=x+resolution/2.5f){
+                y = m_single*x+q_single;
+                index_x = floor((x-origin_x)/resolution);
+                index_y = floor((y-origin_y)/resolution);
+                if (grid->data[index_y*width+index_x] > threshold){
+                    return true;    //intersection
+                }
+            }
+            return false;    //no intersection
+        }
+    } else {
+        //TODO
+        return false;        
+    }
 }
 
 
