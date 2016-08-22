@@ -229,7 +229,7 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 		        point_to_test[0] = goal.x;
 		        point_to_test[1] = goal.y;
                 //TODO put real thickness coming from parameters
-		        collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0);
+		        collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0.3);
 		}
 		if (collision){
 			if (angle_2_goal > max_angle){
@@ -249,7 +249,7 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 			point_to_test[0] = tree_points[random_point_in_tree-1][0] + random_increment*versor[0]*cos(random_angle) - random_increment*versor[1]*sin(random_angle);
 			point_to_test[1] = tree_points[random_point_in_tree-1][1] + random_increment*versor[0]*sin(random_angle) + random_increment*versor[1]*cos(random_angle);
             //TODO put real thickness coming from parameters
-			collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0);
+			collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0.3);
 		}
 		if (!collision){	//add point and connection in tree. Update Voronoi volumes
 			points_added++;
@@ -393,6 +393,9 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
     }
     //ROS_INFO("From TO: %f - %f - %f - %f", _from_x, _from_y, _to_x, _to_y);
 
+    float to_x_minus_from_x = _to_x - _from_x;
+    float to_y_minus_from_y = _to_y - _from_y;    
+
     if (thickness == 0){
         //ROS_INFO("Thickness is zero");
         //TODO better collision check for single line
@@ -400,8 +403,7 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
         float m_single, q_single;
         float max_points_x = std::max(_from_x,_to_x);
         float min_points_x = std::min(_from_x,_to_x);
-        float to_x_minus_from_x = _to_x - _from_x;
-        float to_y_minus_from_y = _to_y - _from_y;
+        
         if (to_x_minus_from_x != 0){
             m_single = to_y_minus_from_y/to_x_minus_from_x;
             q_single = _from_y - m_single*_from_x;
@@ -436,6 +438,102 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
         }
     } else {
         //TODO
+        //probably is stupid to check for all expanded lines instead of expanding the map and checking with the no-thickness algorithm
+        //TODO check which is faster
+        float c[2],d[2],e[2],f[2];
+        float alpha;    //
+        float m[4];
+        float q[4];
+        float min_y[4];
+        float max_y[4];
+        if (to_x_minus_from_x != 0)
+            alpha = atan(to_y_minus_from_y/to_x_minus_from_x);
+        else
+            alpha = M_PI/2;
+        float cosalpha = cos(alpha);
+        float sinalpha = sin(alpha);
+        c[0] = _from_x + cosalpha*(-thickness) -sinalpha*(thickness);
+        c[1] = _from_y + sinalpha*(-thickness) -cosalpha*(thickness);
+        
+        d[0] = _to_x + cosalpha*(thickness) -sinalpha*(thickness);
+        d[1] = _to_y + sinalpha*(thickness) -cosalpha*(thickness);
+
+        e[0] = _to_x + cosalpha*(thickness) -sinalpha*(-thickness);
+        e[1] = _to_y + sinalpha*(thickness) -cosalpha*(-thickness);
+
+        f[0] = _from_x + cosalpha*(-thickness) -sinalpha*(-thickness);
+        f[1] = _from_y + sinalpha*(-thickness) -cosalpha*(-thickness);
+
+        float d_minus_c_x = d[0]-c[0];
+        float e_minus_d_x = e[0]-d[0];
+        float f_minus_e_x = f[0]-e[0];
+        float c_minus_f_x = c[0]-f[0];
+    
+        if (d_minus_c_x != 0){
+            m[0] = (d[1]-c[1])/d_minus_c_x;
+            q[0] = c[1]-m[0]*c[0];
+        } else {
+            m[0] = 0;
+            q[0] = 0;
+        }
+        min_y[0] = std::min(d[1],c[1]);
+        max_y[0] = std::max(d[1],c[1]);
+
+        if (e_minus_d_x != 0){
+            m[1] = (e[1]-d[1])/e_minus_d_x;
+            q[1] = d[1]-m[1]*d[0];
+        } else {
+            m[1] = 0;
+            q[1] = 0;
+        }
+        min_y[1] = std::min(e[1],d[1]);
+        max_y[1] = std::max(e[1],d[1]);
+
+        if (f_minus_e_x != 0){
+            m[2] = (f[1]-e[1])/f_minus_e_x;
+            q[2] = e[1]-m[2]*e[0];
+        } else {
+            m[2] = 0;
+            q[2] = 0;
+        }
+        min_y[2] = std::min(f[1],e[1]);
+        max_y[2] = std::max(f[1],e[1]);
+
+        if (c_minus_f_x != 0){
+            m[3] = (c[1]-f[1])/c_minus_f_x;
+            q[3] = f[1]-m[3]*f[0];
+        } else {
+            m[3] = 0;
+            q[3] = 0;
+        }
+        min_y[3] = std::min(c[1],f[1]);
+        max_y[3] = std::max(c[1],f[1]);
+        
+        float max_points_x = std::max(c[0],std::max(d[0],std::max(e[0],f[0])));
+        float min_points_x = std::min(c[0],std::min(d[0],std::min(e[0],f[0])));
+        
+        for (index_x = floor((min_points_x-origin_x)/resolution); index_x < floor((max_points_x-origin_x)/resolution); index_x++){
+            float temp_max = origin_y - height/2*resolution;
+            float temp_min = origin_y + height/2*resolution;
+            for (int j=0; j<4; j++){    //check in four lines
+                if (m[j] == 0){
+                    temp_min = min_y[j];
+                    temp_max = max_y[j];    
+                } else {
+                    float y = m[j]*(index_x*resolution+origin_x+resolution/2)+q[j];
+                    if (y < temp_min && y > min_y[j]) temp_min = y;
+                    if (y > temp_max && y < max_y[j]) temp_max = y;
+                }
+            }
+            int index_y_min = floor((temp_min-origin_y)/resolution);
+            int index_y_max = floor((temp_max-origin_y)/resolution);
+            //TODO put "safe" maybe
+            for (index_y = index_y_min; index_y < index_y_max; index_y++){
+                if (grid->data[index_y*width+index_x] > threshold){
+                    return true;    //intersection
+                }
+            }
+        }
         return false;        
     }
 }
