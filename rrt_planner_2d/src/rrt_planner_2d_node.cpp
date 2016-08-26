@@ -7,6 +7,7 @@
 
 
 #include "rrt_planner_2d_helper.h"         //GRID
+#include "geometry_msgs/PoseStamped.h"
 //#include "reference/LeashingCommand.h"   //leashing
 //#include "reference/LeashingStatus.h"    //leashing
 //#include "geographic_msgs/GeoPose.h"	 //leashing
@@ -16,6 +17,8 @@ typedef long long int64; typedef unsigned long long uint64;	//For time benchmark
 
 
 //TODO delete[] dynamic arrays on shutdown
+//TODO use vectors instead of dynamic arrays
+//TODO parameter server
 
 
 uint64 GetTimeMs64()
@@ -45,6 +48,9 @@ public:
 		//subscribers
 		//subFromPosition_ = n_.subscribe("/position_nav", 10, &RRT_planner_2d_NodeClass::readPositionMessage,this);
 		subMap = n_.subscribe("/map", 10, &RRT_planner_2d_NodeClass::readMap,this);
+        subGoal = n_.subscribe("/goal_rrt", 10, &RRT_planner_2d_NodeClass::readGoal,this);
+        subStart = n_.subscribe("/start_rrt", 10, &RRT_planner_2d_NodeClass::readStart,this);
+        subGoalRviz = n_.subscribe("/move_base_simple/goal", 10, &RRT_planner_2d_NodeClass::readGoalRviz,this);
 
 		// publishers
 		//pubToReference_ = n_.advertise<guidance_node_amsl::Reference>("/reference",10);
@@ -64,9 +70,9 @@ public:
 		N_WP = 0;      //OUTPUT
 		number_connections = 0;
 		number_points = 0;
-		max_points = 1000;	//TODO take prom parameter server
+		max_points = 3000;	//TODO take prom parameter server
 
-		WP = new float *[150];        //OUTPUT    //TODO check hardcoded 150
+		/*WP = new float *[150];        //OUTPUT    //TODO check hardcoded 150
 		for(int i = 0; i<150; i++){
 			WP[i] = new float[2];
 		}
@@ -77,23 +83,81 @@ public:
 		tree_points = new float *[max_points];
 		for(int i = 0; i<max_points; i++){
 			tree_points[i] = new float[2];
-		}
-		max_length = 1.5;	//TODO take prom parameter server
-		min_length = 0.4;
+		}*/
+		max_length = 3;	//TODO take prom parameter server
+		min_length = 0.2;
 		max_angle = 0.55;
 		max_error = 0.2;
-
+        clearance = 0.2;
 	}
 
-	void readMap(const nav_msgs::OccupancyGrid::ConstPtr& grid)
-	{
-		bool collision;
+	void readMap(const nav_msgs::OccupancyGrid::ConstPtr& grid){
+        //TODO check only collision first to see if old path is good
+		_grid = grid;
+        
+        //temp
+        /*bool collision;
+        geometry_msgs::Point p;
+        collision = check_collision(_grid, 0, -5, 5, 0, 0.2);
+        ROS_INFO("Collision: %s", collision ? "true" : "false");
+        p.x = 0;
+		p.y = -5;
+		p.z = 0;
+		line_list.points.push_back(p);
+        p.x = 5;
+		p.y = 0;
+		p.z = 0;
+		line_list.points.push_back(p);
+        marker_pub.publish(line_list);*/
+        //----------
+
+        executeRRT();
+	}
+	
+    void readGoal(const geometry_msgs::Point::ConstPtr& goal_in){
+        goal = *goal_in;
+        points.action = points.DELETE;
+        marker_pub.publish(points);
+        points.action = points.ADD;
+        points.points.resize(0);
+        points.points.push_back(start);
+		points.points.push_back(goal);
+		marker_pub.publish(points);
+        executeRRT();
+    }
+
+    void readGoalRviz(const geometry_msgs::PoseStamped::ConstPtr& goal_in_rviz){
+        goal = goal_in_rviz->pose.position;
+        points.action = points.DELETE;
+        marker_pub.publish(points);
+        points.action = points.ADD;
+        points.points.resize(0);
+        points.points.push_back(start);
+		points.points.push_back(goal);
+		marker_pub.publish(points);
+        executeRRT();
+    }
+
+    void readStart(const geometry_msgs::Point::ConstPtr& start_in){
+        start = *start_in;
+        points.action = points.DELETE;
+        marker_pub.publish(points);
+        points.action = points.ADD;
+        points.points.resize(0);
+        points.points.push_back(start);
+		points.points.push_back(goal);
+		marker_pub.publish(points);
+        executeRRT();
+    }
+
+    void executeRRT(){
+        bool collision;
 		bool found;
 		uint64 time;
 
 		time = GetTimeMs64();
 		//collision = check_collision(grid, 0, 5, 1, 0, norm(0-5,1-0));
-		found = rrt_cones_2d(WP, &N_WP, tree_connections, &number_connections, tree_points, &number_points, max_length, min_length, max_points, max_angle, grid, start, goal, max_error);
+		found = rrt_cones_2d(WP, &N_WP, tree_connections, &number_connections, tree_points, &number_points, max_length, min_length, max_points, max_angle, _grid, start, goal, max_error,clearance);
 		time = GetTimeMs64() - time;
 		ROS_INFO("Elapsed milliseconds: %llu", time);
 		ROS_INFO("Found: %s", found ? "true" : "false");
@@ -114,6 +178,7 @@ public:
 			line_list.points.push_back(p);
 		}
 		marker_pub.publish(line_list);
+        line_list.points.resize(0);
 
 		if (found){
             ROS_INFO("[RRT]: found");
@@ -126,15 +191,19 @@ public:
 				line_strip.points.push_back(p);
 			}
 			marker_pub.publish(line_strip);
+            line_strip.points.resize(0);
 		} else {
             ROS_INFO("[RRT]: not found");
 		}
 
-		delete[] tree_connections;
-		delete[] WP;
+        WP.resize(0);
+        tree_connections.resize(0);
+        tree_points.resize(0);
+
+		//delete[] tree_connections;
+		//delete[] WP;
 		//new_pos = true;
-	}
-	
+    }
 
 	void run() {
 		ros::Rate loop_rate(rate);
@@ -198,9 +267,6 @@ public:
 			line_strip.points.push_back(p);
 			marker_pub.publish(line_strip);*/
 
-			points.points.push_back(start);
-			points.points.push_back(goal);
-			marker_pub.publish(points);
 
 			//-----------------------------------------//
 
@@ -224,6 +290,9 @@ public:
 
 			loop_rate.sleep();
 		}
+        //delete[] tree_connections;
+		//delete[] WP;
+        //delete[] tree_points;
 	}
 
 protected:
@@ -232,6 +301,9 @@ protected:
 
 	//ros::Subscriber subFromPosition_;
 	ros::Subscriber subMap;
+    ros::Subscriber subGoal;
+    ros::Subscriber subStart;
+    ros::Subscriber subGoalRviz;
 
 	//ros::Publisher pubToReference_;
 	ros::Publisher marker_pub;
@@ -243,10 +315,14 @@ protected:
 	int rate;
 	geometry_msgs::Point start;
 	geometry_msgs::Point goal;
+    nav_msgs::OccupancyGrid::ConstPtr _grid;
 
-	float **WP;    //OUTPUT
-	int **tree_connections;    //OUTPUT
-	float **tree_points;
+	//float **WP;    //OUTPUT
+    std::vector<std::vector<float> > WP;
+    std::vector<std::vector<int> > tree_connections;
+    std::vector<std::vector<float> > tree_points;
+	//int **tree_connections;    //OUTPUT
+	//float **tree_points;
 	int N_WP;      //OUTPUT
 	int number_connections;
 	int number_points;
@@ -255,6 +331,7 @@ protected:
 	float min_length;
 	float max_angle;
 	float max_error;
+    float clearance;
 
 private:
 

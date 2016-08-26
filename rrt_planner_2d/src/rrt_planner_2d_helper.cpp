@@ -4,6 +4,8 @@
 #include "ros/ros.h"
 #include "voro++.hh"
 #include <vector>
+#include <ctime>
+
 //#include <stdlib.h>     /* srand, rand */
 //#include "nav_msgs/OccupancyGrid.h"
 
@@ -105,12 +107,15 @@ bool intersection_square_segment(const float x1,const float y1,const float x2,co
 	return intersection;
 }
 
-bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connections, int *number_connections, float **tree_points, int *points_added_out, const float max_length,const float min_length,const int max_points,const float max_angle, const nav_msgs::OccupancyGrid::ConstPtr& grid, const geometry_msgs::Point start,const geometry_msgs::Point goal,const float max_error){
+bool rrt_cones_2d(std::vector<std::vector<float> >& waypoints, int *number_waypoints, std::vector<std::vector<int> >& tree_connections, int *number_connections, std::vector<std::vector<float> >& tree_points, int *points_added_out, const float max_length,const float min_length,const int max_points,const float max_angle, const nav_msgs::OccupancyGrid::ConstPtr& grid, const geometry_msgs::Point start,const geometry_msgs::Point goal,const float max_error, const float clearance){
 	using namespace voro;
+
+    srand (time(NULL));
+
+    ROS_INFO("RRT: starting");
 	bool found = false;  //set false unless path found
 	*number_waypoints = 0;
 	//float tree_points[max_points][2];
-	//TODO maybe dynamic memory array here
 	//float tree_branches_per_point[max_points];
 	//memset(tree_branches_per_point, 0, max_points*sizeof(float));
 	float *tree_branches_per_point = new float[max_points];
@@ -128,12 +133,14 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 	std::vector<int> neigh;
 
 	//float tree_connections[max_points][2];
-	float vector[2];
+	std::vector<float> vector(2);
+    std::vector<float> temp(2);
+    std::vector<int> temp_int(2);
 	float angle_2_goal;
 	float distance_to_goal;
-	float previous_point[2];
-	float point_to_test[2];
-	float versor[2];
+	std::vector<float> previous_point(2);
+	std::vector<float> point_to_test(2);
+	std::vector<float> versor(2);
 	int points_added = 0;
 	int waipoints_added = 0;
 	int connection_added = 0;
@@ -143,6 +150,7 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 	int index = 0;
     int max_iterations = max_points*100;  //TODO check-remove
     int iterations = 0;
+    int random_point_in_tree;
 
     //Voronoi related
     const double x_min=grid->info.origin.position.x;
@@ -150,8 +158,8 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
     const double y_min=grid->info.origin.position.y;
     const double y_max=grid->info.origin.position.y+(double)grid->info.height*grid->info.resolution;
     const double z_min=-0.5,z_max=0.5;
-    ROS_INFO("RRT: Container: %f - %f - %f - %f", x_min, x_max, y_min, y_max);
-    ROS_INFO("RRT: Grid origin: %f - %f. Grid width - heigth: %d - %d. Resolution: %f", grid->info.origin.position.x, grid->info.origin.position.y, grid->info.width, grid->info.height, grid->info.resolution);
+    //ROS_INFO("RRT: Container: %f - %f - %f - %f", x_min, x_max, y_min, y_max);
+    //ROS_INFO("RRT: Grid origin: %f - %f. Grid width - heigth: %d - %d. Resolution: %f", grid->info.origin.position.x, grid->info.origin.position.y, grid->info.width, grid->info.height, grid->info.resolution);
 
     const int n_x=10,n_y=10,n_z=1;
     voronoicell_neighbor cell;
@@ -163,8 +171,11 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 
 	//Fill start in the tree
 	points_added++;
-	tree_points[points_added-1][0] = start.x;
-	tree_points[points_added-1][1] = start.y;
+    temp[0] = start.x;
+    temp[1] = start.y;
+    tree_points.push_back(temp);
+	//tree_points[points_added-1][0] = start.x;
+	//tree_points[points_added-1][1] = start.y;
 
 	//  ---- Voronoi ----
 	voronoi_container.put(points_added,(double)start.x,(double)start.y,0.0);
@@ -198,9 +209,9 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 		}
         //ROS_INFO("[RRT]: Max volume: %f",max_volume);
 		random_number = (float)rand() / (RAND_MAX + 1.0); //Random between 0 and 0.99999  TODO check this
-		int random_point_in_tree = floor(random_number*points_added) + 1;
+		random_point_in_tree = floor(random_number*points_added) + 1;
         //ROS_INFO("RRT: iteration");
-		while (tree_branches_per_point[random_point_in_tree-1] > 7 ){// || voronoi_volume_per_point[random_point_in_tree-1] < max_volume/30){   //to avoid points with more than 5 branches
+		while (tree_branches_per_point[random_point_in_tree-1] > 7 ){// || voronoi_volume_per_point[random_point_in_tree-1] < max_volume/30){   //to avoid points with more than 7 branches
 			random_number = (float)rand() / (RAND_MAX + 1.0);
             //ROS_INFO("[RRT]: Random: %f",random_number);
 			random_point_in_tree = floor(random_number*points_added) + 1;
@@ -219,17 +230,18 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 					break;
 				}
 			}
+            //TODO use vectors directly and no field by field
 			vector[0] = tree_points[random_point_in_tree-1][0]-previous_point[0];
 			vector[1] = tree_points[random_point_in_tree-1][1]-previous_point[1];
 		}
 		angle_2_goal = angle_2_vectors_2d(vector[0],vector[1],goal.x-tree_points[random_point_in_tree-1][0],goal.y-tree_points[random_point_in_tree-1][1]);
-		distance_to_goal = norm(tree_points[random_point_in_tree][0]-goal.x, tree_points[random_point_in_tree][1]-goal.y);
+		distance_to_goal = norm(tree_points[random_point_in_tree-1][0]-goal.x, tree_points[random_point_in_tree-1][1]-goal.y);
 		bool collision = true;
 		if (angle_2_goal < max_angle && angle_2_goal > -max_angle && distance_to_goal > min_length && distance_to_goal < max_length){
 		        point_to_test[0] = goal.x;
 		        point_to_test[1] = goal.y;
                 //TODO put real thickness coming from parameters
-		        collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0.3);
+		        collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], clearance);
 		}
 		if (collision){
 			if (angle_2_goal > max_angle){
@@ -239,6 +251,7 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 				angle_2_goal = -max_angle;
 			}
 			random_number = (float)rand() / (RAND_MAX);
+            //ROS_INFO("[RRT]: Random: %f", random_number);
 			random_angle = random_number*max_angle*2-max_angle;
 			random_number = (float)rand() / (RAND_MAX);
 			random_increment = random_number*(max_length-min_length)+min_length;
@@ -248,13 +261,14 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 			versor[1] = vector[1]/(norm(vector[0],vector[1]));
 			point_to_test[0] = tree_points[random_point_in_tree-1][0] + random_increment*versor[0]*cos(random_angle) - random_increment*versor[1]*sin(random_angle);
 			point_to_test[1] = tree_points[random_point_in_tree-1][1] + random_increment*versor[0]*sin(random_angle) + random_increment*versor[1]*cos(random_angle);
-            //TODO put real thickness coming from parameters
-			collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], 0.3);
+            //ROS_INFO("[RRT]: Point to test: %f - %f", point_to_test[0], point_to_test[1]);
+			collision = check_collision(grid, tree_points[random_point_in_tree-1][0],tree_points[random_point_in_tree-1][1], point_to_test[0], point_to_test[1], clearance);
 		}
 		if (!collision){	//add point and connection in tree. Update Voronoi volumes
 			points_added++;
-			tree_points[points_added-1][0] = point_to_test[0];
-			tree_points[points_added-1][1] = point_to_test[1];
+            tree_points.push_back(point_to_test);
+			//tree_points[points_added-1][0] = point_to_test[0];
+			//tree_points[points_added-1][1] = point_to_test[1];
 
 			//  ---- Voronoi ----
 			//ROS_INFO("[RRT]: Inserting %d particle: %f - %f", points_added, (double)point_to_test[0], (double)point_to_test[1]);
@@ -299,19 +313,22 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
                 ROS_INFO("RRT: Not able to compute cell!");
             }
 			//-----------------------------------------------
-
 			tree_branches_per_point[random_point_in_tree-1]++;
 			connection_added++;
-			tree_connections[connection_added-1][0] = random_point_in_tree;
-			tree_connections[connection_added-1][1] = points_added;
+            temp_int[0] = random_point_in_tree;
+            temp_int[1] = points_added;
+            tree_connections.push_back(temp_int);
+			//tree_connections[connection_added-1][0] = random_point_in_tree;
+			//tree_connections[connection_added-1][1] = points_added;
 			if (norm(point_to_test[0]-goal.x,point_to_test[1]-goal.y) < max_error){	//found path
 				found = true;
 				//Build waypoints
 				index = points_added;
 				while (index != 1){
 					waipoints_added++;
-					waypoints[waipoints_added-1][0] = tree_points[index-1][0];
-					waypoints[waipoints_added-1][1] = tree_points[index-1][1];
+                    waypoints.push_back(tree_points[index-1]);
+					//waypoints[waipoints_added-1][0] = tree_points[index-1][0];
+					//waypoints[waipoints_added-1][1] = tree_points[index-1][1];
 					for (int j=0; j<connection_added; j++){
 						if (tree_connections[j][1] == index){
 							index = tree_connections[j][0];
@@ -320,9 +337,12 @@ bool rrt_cones_2d(float **waypoints, int *number_waypoints, int **tree_connectio
 					}
 				}
                 waipoints_added++;
-				waypoints[waipoints_added-1][0] = start.x;
-				waypoints[waipoints_added-1][1] = start.y;
-				//Reverse waypoints TODO
+                temp[0] = start.x;
+                temp[1] = start.y;
+                waypoints.push_back(temp);
+				//waypoints[waipoints_added-1][0] = start.x;
+				//waypoints[waipoints_added-1][1] = start.y;
+				//Reverse waypoints TODO or build directly in reverse
 
 				*number_waypoints = waipoints_added;
 			}
@@ -349,7 +369,6 @@ float norm(float a, float b){
 
 bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float from_x, const float from_y, const float to_x, const float to_y, const float thickness){
 	//distance is the norm of the distance between "from" and "to" points
-	//TODO better cells selection to check. Now looking for all the cells in the square around the radius "distance"
     float _from_x = from_x;
     float _from_y = from_y;
     float _to_x = to_x;
@@ -360,8 +379,8 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
 	float origin_x = grid->info.origin.position.x;
 	float origin_y = grid->info.origin.position.y;
 	//ROS_INFO("Map data: %d - %d - %f - %f - %f", width, height, resolution, origin_x, origin_y);
-	int threshold = 5;	//TODO define better based on data
-    bool safe = false; //if true adds more tiles around the line for safety //TODO better tiles checking
+	int threshold = 1;	//TODO define better based on data
+    bool safe = false; //if true adds more tiles around the line for safety
 
     //---OLD CHECK----
 	/*int width_tile_index_from = floor((from_x-origin_x)/resolution); // index of the tile of initial point along x
@@ -381,8 +400,9 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
     
     //---NEW CHECK---
     int index_x, index_y;
-    if (_to_x <= _from_x){
+    if (_to_x < _from_x || (_to_x == _from_x && _to_y < _from_y) ){
         //invert from/to points if to_x is less than from_x to simplify things later
+        //ROS_INFO("[RRT DEBUG]: Inverting points");
         float temp_x, temp_y;
         temp_x = _from_x;
         temp_y = _from_y;
@@ -437,6 +457,7 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
             return false;    //no intersection
         }
     } else {
+        //ROS_INFO("[RRT DEBUG]: Thickness is NON zero");
         //TODO
         //probably is stupid to check for all expanded lines instead of expanding the map and checking with the no-thickness algorithm
         //TODO check which is faster
@@ -446,23 +467,28 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
         float q[4];
         float min_y[4];
         float max_y[4];
-        if (to_x_minus_from_x != 0)
+        if (to_x_minus_from_x != 0){
             alpha = atan(to_y_minus_from_y/to_x_minus_from_x);
-        else
+            //ROS_INFO("[RRT DEBUG]: Alpha: %f",alpha);
+        } else {
             alpha = M_PI/2;
+        }
         float cosalpha = cos(alpha);
         float sinalpha = sin(alpha);
+        //ROS_INFO("[RRT DEBUG]: cosaplha: %f - sinalpha: %f",cosalpha,sinalpha);
         c[0] = _from_x + cosalpha*(-thickness) -sinalpha*(thickness);
-        c[1] = _from_y + sinalpha*(-thickness) -cosalpha*(thickness);
+        c[1] = _from_y + sinalpha*(-thickness) +cosalpha*(thickness);
         
         d[0] = _to_x + cosalpha*(thickness) -sinalpha*(thickness);
-        d[1] = _to_y + sinalpha*(thickness) -cosalpha*(thickness);
+        d[1] = _to_y + sinalpha*(thickness) +cosalpha*(thickness);
 
         e[0] = _to_x + cosalpha*(thickness) -sinalpha*(-thickness);
-        e[1] = _to_y + sinalpha*(thickness) -cosalpha*(-thickness);
+        e[1] = _to_y + sinalpha*(thickness) +cosalpha*(-thickness);
 
         f[0] = _from_x + cosalpha*(-thickness) -sinalpha*(-thickness);
-        f[1] = _from_y + sinalpha*(-thickness) -cosalpha*(-thickness);
+        f[1] = _from_y + sinalpha*(-thickness) +cosalpha*(-thickness);
+
+        //ROS_INFO("[RRT DEBUG]: C: %f - %f, D: %f - %f, E: %f - %f, F: %f - %f",c[0],c[1],d[0],d[1],e[0],e[1],f[0],f[1]);
 
         float d_minus_c_x = d[0]-c[0];
         float e_minus_d_x = e[0]-d[0];
@@ -489,6 +515,7 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
         min_y[1] = std::min(e[1],d[1]);
         max_y[1] = std::max(e[1],d[1]);
 
+        //TODO: 4 lines are parallel, we can avoid computing 4 "m" because they are equal 2 by 2
         if (f_minus_e_x != 0){
             m[2] = (f[1]-e[1])/f_minus_e_x;
             q[2] = e[1]-m[2]*e[0];
@@ -508,6 +535,11 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
         }
         min_y[3] = std::min(c[1],f[1]);
         max_y[3] = std::max(c[1],f[1]);
+
+        //ROS_INFO("[RRT DEBUG]: m: %f - %f - %f - %f",m[0],m[1],m[2],m[3]);
+        //ROS_INFO("[RRT DEBUG]: q: %f - %f - %f - %f",q[0],q[1],q[2],q[3]);
+        //ROS_INFO("[RRT DEBUG]: miny: %f - %f - %f - %f",min_y[0],min_y[1],min_y[2],min_y[3]);
+        //ROS_INFO("[RRT DEBUG]: maxy: %f - %f - %f - %f",max_y[0],max_y[1],max_y[2],max_y[3]);
         
         float max_points_x = std::max(c[0],std::max(d[0],std::max(e[0],f[0])));
         float min_points_x = std::min(c[0],std::min(d[0],std::min(e[0],f[0])));
@@ -517,8 +549,12 @@ bool check_collision(const nav_msgs::OccupancyGrid::ConstPtr& grid, const float 
             float temp_min = origin_y + height/2*resolution;
             for (int j=0; j<4; j++){    //check in four lines
                 if (m[j] == 0){
-                    temp_min = min_y[j];
-                    temp_max = max_y[j];    
+                    if (min_y[j] < temp_min){
+                        temp_min = min_y[j];
+                    }
+                    if (max_y[j] > temp_max){
+                        temp_max = max_y[j];
+                    }
                 } else {
                     float y = m[j]*(index_x*resolution+origin_x+resolution/2)+q[j];
                     if (y < temp_min && y > min_y[j]) temp_min = y;
